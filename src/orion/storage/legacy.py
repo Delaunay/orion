@@ -55,6 +55,7 @@ class Legacy(BaseStorageProtocol):
 
     def __init__(self, config=None):
         if config is not None:
+            print(config)
             setup_database(config)
 
         self._db = Database()

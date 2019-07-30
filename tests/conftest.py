@@ -12,9 +12,12 @@ from orion.algo.base import (BaseAlgorithm, OptimizationAlgorithm)
 from orion.core.io import resolve_config
 from orion.core.io.database import Database
 from orion.core.io.database.mongodb import MongoDB
+from orion.core.io.database.pickleddb import PickledDB
 from orion.core.worker.trial import Trial
 from orion.storage.base import Storage
 from orion.storage.legacy import Legacy
+
+PICKLE_DB_HARDCODED = 'unittests.pkl'
 
 
 class DumbAlgo(BaseAlgorithm):
@@ -172,6 +175,7 @@ def null_db_instances():
     Legacy.instance = None
     Database.instance = None
     MongoDB.instance = None
+    PickledDB.instance = None
 
 
 @pytest.fixture(scope='function')
@@ -201,13 +205,11 @@ def create_db_instance(null_db_instances, clean_db):
     try:
         config = {
             'database': {
-                'type': 'MongoDB',
-                'name': 'orion_test',
-                'username': 'user',
-                'password': 'pass'
+                'type': 'PickledDB',
+                'host': PICKLE_DB_HARDCODED
             }
         }
-        db = Storage(of_type='legacy', config=config)
+        db = Storage('legacy', config=config)
     except ValueError:
         db = Storage()
 

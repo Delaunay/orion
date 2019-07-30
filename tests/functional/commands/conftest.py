@@ -12,6 +12,19 @@ import orion.core.cli
 from orion.core.io.database import Database
 from orion.core.io.experiment_builder import ExperimentBuilder
 from orion.core.worker.trial import Trial
+from orion.storage.base import Storage, get_storage
+from orion.core.io.database.pickleddb import PickledDB
+from orion.storage.legacy import Legacy
+
+
+PICKLE_DB_HARDCODED = '/tmp/unittests.pkl'
+
+
+def remove(db):
+    try:
+        os.remove(db)
+    except FileNotFoundError:
+        pass
 
 
 class DumbAlgo(BaseAlgorithm):
@@ -92,30 +105,36 @@ def exp_config():
 @pytest.fixture(scope='session')
 def database():
     """Return Mongo database object to test with example entries."""
-    client = MongoClient(username='user', password='pass', authSource='orion_test')
-    database = client.orion_test
-    yield database
-    client.close()
+    client = PickledDB(host=PICKLE_DB_HARDCODED)
+    yield client
 
 
 @pytest.fixture()
 def clean_db(database, db_instance):
     """Clean insert example experiment entries to collections."""
-    database.experiments.drop()
-    database.lying_trials.drop()
-    database.trials.drop()
-    database.workers.drop()
-    database.resources.drop()
+    print('cleaning')
+    db = Storage.instance._db
+    db.remove('experiments', {})
+    db.remove('lying_trials', {})
+    db.remove('trials', {})
+    db.remove('workers', {})
+    db.remove('resources', {})
+    remove(PICKLE_DB_HARDCODED)
 
 
 @pytest.fixture()
 def db_instance(null_db_instances):
     """Create and save a singleton database instance."""
     try:
-        db = Database(of_type='MongoDB', name='orion_test',
-                      username='user', password='pass')
+        config = {
+            'database': {
+                'type': 'PickledDB',
+                'host': PICKLE_DB_HARDCODED
+            }
+        }
+        db = Storage('legacy', config=config)
     except ValueError:
-        db = Database()
+        db = get_storage()
 
     return db
 
@@ -123,14 +142,19 @@ def db_instance(null_db_instances):
 @pytest.fixture
 def only_experiments_db(clean_db, database, exp_config):
     """Clean the database and insert only experiments."""
-    database.experiments.insert_many(exp_config[0])
+    get_storage().create_experiment(exp_config[0])
 
 
 def ensure_deterministic_id(name, db_instance, update=None):
     """Change the id of experiment to its name."""
-    experiment = db_instance.read('experiments', {'name': name})[0]
-    db_instance.remove('experiments', {'_id': experiment['_id']})
+
+    experiments = db_instance.fetch_experiments(dict(name=name))
+    assert len(experiments) == 1
+
+    experiment = experiments[0]
+    print(experiment['_id'])
     experiment['_id'] = name
+    print(experiment['_id'])
 
     if experiment['refers']['parent_id'] is None:
         experiment['refers']['root_id'] = name
@@ -138,7 +162,7 @@ def ensure_deterministic_id(name, db_instance, update=None):
     if update is not None:
         experiment.update(update)
 
-    db_instance.write('experiments', experiment)
+    db_instance.create_experiment(experiment)
 
 
 # Experiments combinations fixtures
@@ -171,7 +195,7 @@ def single_without_success(one_experiment):
         x['value'] = x_value
         trial = Trial(experiment=exp.id, params=[x], status=status)
         x_value += 1
-        Database().write('trials', trial.to_dict())
+        get_storage().register_trial(trial)
 
 
 @pytest.fixture
@@ -182,7 +206,7 @@ def single_with_trials(single_without_success):
     x = {'name': '/x', 'type': 'real', 'value': 100}
     results = {"name": "obj", "type": "objective", "value": 0}
     trial = Trial(experiment=exp.id, params=[x], status='completed', results=[results])
-    Database().write('trials', trial.to_dict())
+    get_storage().register_trial(trial)
 
 
 @pytest.fixture
@@ -215,17 +239,16 @@ def family_with_trials(two_experiments):
         x['value'] = x_value
         trial2 = Trial(experiment=exp2.id, params=[x, y], status=status)
         x_value += 1
-        Database().write('trials', trial.to_dict())
-        Database().write('trials', trial2.to_dict())
+        Storage().register_trial(trial)
+        Storage().register_trial(trial2)
 
 
 @pytest.fixture
 def unrelated_with_trials(family_with_trials, single_with_trials):
     """Create two unrelated experiments with all types of trials."""
     exp = ExperimentBuilder().build_from({'name': 'test_double_exp_child'})
-
-    Database().remove('trials', {'experiment': exp.id})
-    Database().remove('experiments', {'_id': exp.id})
+    get_storage()._db.remove('trials', {'experiment': exp.id})
+    get_storage()._db.remove('experiments', {'_id': exp.id})
 
 
 @pytest.fixture
@@ -262,7 +285,7 @@ def three_family_with_trials(three_experiments_family, family_with_trials):
         z['value'] = x_value * 100
         trial = Trial(experiment=exp.id, params=[x, z], status=status)
         x_value += 1
-        Database().write('trials', trial.to_dict())
+        get_storage().register_trial(trial)
 
 
 @pytest.fixture
@@ -293,4 +316,4 @@ def three_family_branch_with_trials(three_experiments_family_branch, family_with
         z['value'] = x_value * 100
         trial = Trial(experiment=exp.id, params=[x, y, z], status=status)
         x_value += 1
-        Database().write('trials', trial.to_dict())
+        get_storage().register_trial(trial)
